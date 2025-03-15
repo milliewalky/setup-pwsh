@@ -1,0 +1,80 @@
+name: test setup PowerShell
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  windows:
+    runs-on: windows-latest 
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion
+
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion
+
+  windows_tag:
+    runs-on: windows-latest
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+      with:
+        tag: v7.3.3
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion
+
+  linux_tag:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+      with:
+        tag: v7.3.3
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion
+
+  macos_tag:
+    runs-on: macos-latest
+
+    steps:
+    - name: setup PowerShell
+      uses: milliewalky/setup-pwsh@v1
+      with:
+        tag: v7.3.3
+
+    - name: peek PowerShell version
+      shell: pwsh
+      run: $PSVersionTable.PSVersion

@@ -1,0 +1,180 @@
+name: setup PowerShell action
+description: downloads and unpacks PowerShell (pwsh) for gh actions
+inputs:
+  token:
+    description: github personal access token
+    default: ${{ github.token }}
+
+  tag:
+    description: release tag (e.g., '7.5.0' or 'latest')
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    # impl for Windows operating systems
+    - name: download PowerShell
+      id: win32_download_pwsh
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: |
+        # resolve arch
+        $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
+
+        if ($arch -eq "amd64") {
+          $arch = "x64"
+        } elseif ($arch -eq "arm64") {
+          $arch = "arm64"
+        } elseif ($arch -eq "x86") {
+          $arch = "x86"
+        } else {
+          throw "unsupported architecture called `$arch`; architectures that are supported are `amd64`, `arm64` and `x86`!"
+        }
+
+        # build headers
+        $headers = @{
+          "Authorization" = "Bearer $env:token"
+          "Content-Type"  = "application/json"
+        }
+
+        # build uri
+        $uri = if ($env:tag -eq "latest")
+        {
+          "https://api.github.com/repos/PowerShell/PowerShell/releases/latest"
+        }
+        else
+        {
+          "https://api.github.com/repos/PowerShell/PowerShell/releases/tags/$env:tag"
+        }
+
+        # build var for testing jq response and download pwsh
+        $response = Invoke-RestMethod -Uri $uri -Headers $headers
+        $tag = $response.tag_name
+        $version = $tag -replace '^v', ''
+        $name_version_os_arch_ext = "PowerShell-${version}-win-${arch}.zip"
+        $assets = $response.assets
+        $obj = $response.assets | Where-Object { $_.name -eq $name_version_os_arch_ext }
+        if (-not $obj)
+        {
+            throw "asset not found; searched for `$name_version_os_arch_ext`!"
+        }
+
+        Invoke-WebRequest -Uri $obj.browser_download_url -OutFile $obj.name -Headers $headers
+
+        "archive=$($obj.name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      env:
+        token: ${{ inputs.token }}
+        tag: ${{ inputs.tag }}
+
+    # TODO(mmacieje): `&` in powershell case does not do it here, unforunately
+    - name: unpack PowerShell
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: Expand-Archive -Path ${{ steps.win32_download_pwsh.outputs.archive }} -DestinationPath ${{ runner.temp }}\pwsh
+
+    - name: add PowerShell to path
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: echo "${{ runner.temp }}\pwsh" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    # impl for Unix-like operating systems
+    - name: download PowerShell
+      id: unix_like_download_pwsh
+      if: runner.os == 'Linux' || runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -e
+
+        # resolve os
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          os="linux"
+        elif [ "${{ runner.os }}" = "macOS" ]; then
+          os="osx"
+        fi
+
+        # resolve arch
+        arch=$(uname -m)
+        if [ "$os" = "linux" ]; then
+          case "$arch" in
+            x86_64) arch="x64" ;;
+            aarch64) arch="arm64" ;;
+            armv7l) arch="arm32" ;;
+            *) echo "unsupported architecture called `$arch`; architectures that are supported are `arm64` and `arm32`!" >&2; exit 1 ;;
+          esac
+        elif [ "$os" = "osx" ]; then
+          case "$arch" in
+            x86_64) arch="x64" ;;
+            arm64) arch="arm64" ;;
+            *) echo "unsupported architecture called `$arch`; architectures that are supported are `x64` and `arm64`!" >&2; exit 1 ;;
+          esac
+        fi
+
+        # build headers
+        headers=(-H "Authorization: Bearer $token" -H "Content-Type: application/json")
+
+        # build uri
+        if [ "$tag" = "latest" ]; then
+          uri="https://api.github.com/repos/PowerShell/PowerShell/releases/latest"
+        else
+          uri="https://api.github.com/repos/PowerShell/PowerShell/releases/tags/$tag"
+        fi
+
+        # fetch release info
+        if command -v curl >/dev/null 2>&1; then
+          response=$(curl -s "${headers[@]}" "$uri")
+        elif command -v wget >/dev/null 2>&1; then
+          # wget doesn't directly allow multiple headers simply, but we can do:
+          # (if needed, but curl should be available by default on github runners)
+          response=$(wget -qO- --header="Authorization: Bearer $token" --header="Content-Type: application/json" "$uri")
+        else
+          echo "neither curl nor wget is available." >&2
+          exit 1
+        fi
+
+        # build var for testing jq response and download pwsh
+        _tag=$(echo "$response" | jq -r '.tag_name')
+        version="${_tag#v}"
+        name_version_os_arch_ext="powershell-${version}-${os}-${arch}.tar.gz"
+
+        # extract download url using jq
+        url=$(echo $response | jq -r ".assets[] | select(.name == \"$name_version_os_arch_ext\") | .browser_download_url")
+
+        echo $url
+
+        if [ -z "$url" ]; then
+          echo "asset not found; searched for `$name_version_os_arch_ext`!" >&2
+          exit 1
+        fi
+
+        # download the archive
+        if command -v curl >/dev/null 2>&1; then
+          curl -L "${headers[@]}" "$url" -o "$name_version_os_arch_ext"
+        else
+          # fallback to wget if needed
+          wget --header="Authorization: Bearer $token" --header="Content-Type: application/json" -O "$name_version_os_arch_ext" "$url"
+        fi
+
+        echo "archive=$name_version_os_arch_ext" >> "$GITHUB_OUTPUT"
+
+      env:
+        token: ${{ inputs.token }}
+        tag: ${{ inputs.tag }}
+
+    - name: unpack PowerShell
+      if: runner.os == 'Linux' || runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -e
+
+        mkdir -p ${{ runner.temp }}/pwsh
+        tar -xf ${{ steps.unix_like_download_pwsh.outputs.archive }} -C ${{ runner.temp }}/pwsh
+        chmod +x ${{ runner.temp }}/pwsh/pwsh
+
+    - name: add PowerShell to path
+      if: runner.os == 'Linux' || runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -e
+
+        echo "${{ runner.temp }}/pwsh" >> $GITHUB_PATH
